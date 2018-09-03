@@ -365,7 +365,7 @@ def main(args):
         else:
             print("voting")
             # voting ('mask_type == mode' in the code), using only pts with at least 3 answers
-            val_data_json_path = '../../json/prediction_jsons/exp_37_voting_at_least_3_answers_predictions.json'
+            val_data_json_path = '../../json/prediction_jsons/exp_98_voting_at_least_3_answers_predictions.json'
             # data_json_path = '../../json/prediction_jsons/exp_37_predictions.json'
 
         with open(val_data_json_path, 'r') as f:

@@ -1,3 +1,4 @@
+import os
 import json
 import csv
 import argparse
@@ -28,7 +29,7 @@ CLASS_NAMES = [
     'sofa',
     'train',
     'tvmonitor',
-    'total'
+    'general'
 ]
 
 CLASSES_WITH_ANNOS = [
@@ -47,14 +48,20 @@ CLASSES_WITH_ANNOS = [
       'potted-plant',
       'sheep',
       'train',
+      'general'
 ]
 
 
 
-def plot_accuracies(cls, per_class_acc_path, results_summary_path):
+def plot_accuracies(cls, per_class_acc_path, results_summary_path, accuracy_calc_method):
     with open(per_class_acc_path, 'r') as f:
-        data = {int(k):v for k,v in json.load(f).items()}
-    
+        if accuracy_calc_method == 'mean_per_class':
+            # last entry is the mean-per-class
+            # for this method we also want to present the per-class accuracy
+            data = {int(k):v[-1] for k,v in json.load(f).items()}
+        else:
+            data = {int(k):v for k,v in json.load(f).items()}
+
     with open(results_summary_path, 'r') as f:
         total_acc = float(f.read().split('\n')[2].split(' = ')[1])
     if cls:
@@ -100,28 +107,32 @@ def plot_bar_graphs(params):
     exp_name = params.experiment_name
     class_name = params.class_name
     class_specific_models_mode = params.class_specific_models_mode
+    accuracy_calc_method = params.accuracy_calc_method
 
     if class_specific_models_mode:
         for i, cls in enumerate(CLASS_NAMES):
             class_name = cls
             base_path = '../../../../resources/eval_results/{0}/{0}_{1}/'.format(exp_name, class_name)
+            if not os.path.exists(base_path):
+                continue
             per_class_acc_path = base_path + 'per_class_acc'
             results_summary_path = base_path + 'summary'
-            plot_accuracies(class_name, per_class_acc_path, results_summary_path)
+            plot_accuracies(class_name, per_class_acc_path, results_summary_path, accuracy_calc_method)
 
     else:
         cls = None
         base_path = '../../../../resources/eval_results/{}/'.format(exp_name)
         per_class_acc_path = base_path + 'per_class_acc'
         results_summary_path = base_path + 'summary'
-        plot_accuracies(cls, per_class_acc_path, results_summary_path)
+        plot_accuracies(cls, per_class_acc_path, results_summary_path, accuracy_calc_method)
 
 
     plt.ion()
     plt.show()
     user_input = raw_input("press any key to quit ")
 
-
+# TODO: if accuracy_calc_method == 'mean_per_class' also drop file
+# for the class-accuracies (object_acc, part_acc)
 def make_table(params):
     # work plan
     # for every class - load the accuracies into dictionary
@@ -131,7 +142,12 @@ def make_table(params):
     exp_name = params.experiment_name
     class_name = params.class_name
     class_specific_models_mode = params.class_specific_models_mode
-    csv_path = '../../docs/class_accuracy_breakdown.csv'
+    accuracy_calc_method = params.accuracy_calc_method
+    assert accuracy_calc_method in ['mean_per_class', 'object_accuracy',
+        'part_accuracy','overall_list_format', 'overall']
+    csv_path = '../../docs/{}/{}/class_accuracy_breakdown.csv'.format(exp_name, accuracy_calc_method)
+    if not os.path.isdir(os.path.dirname(csv_path)):
+        os.makedirs(os.path.dirname(csv_path))
     normalize = False
     min_val = 0.15384615384615385
     max_val = 0.967032967032967
@@ -147,10 +163,22 @@ def make_table(params):
         class_name = cls
         base_path = '../../../../resources/eval_results/{0}/{0}_{1}/'.format(exp_name, class_name)
         per_class_acc_path = base_path + 'per_class_acc'
+        if not os.path.exists(per_class_acc_path):
+            continue
         # results_summary_path = base_path + 'summary'  # can add this also somehow (summary column)
     
         with open(per_class_acc_path, 'r') as f:
-            data = {int(k):v for k,v in json.load(f).items()}
+            if accuracy_calc_method == 'mean_per_class':
+            # last entry is the mean-per-class
+                data = {int(k):v[-1] for k,v in json.load(f).items()}
+            elif accuracy_calc_method == 'object_accuracy':
+                data = {int(k):v[0] for k,v in json.load(f).items()}
+            elif accuracy_calc_method == 'part_accuracy':
+                data = {int(k):v[1] for k,v in json.load(f).items()}
+            elif accuracy_calc_method == 'overall_list_format':
+                data = {int(k):v[-2] for k,v in json.load(f).items()}
+            elif accuracy_calc_method == 'overall':
+                data = {int(k):v for k,v in json.load(f).items()}
 
         if normalize:
             sorted_vals = [((data[k] - min_val) / (max_val - min_val)) * 100 for k in sorted(data)]
@@ -206,6 +234,8 @@ if __name__ == '__main__':
                         help="if experiment directory contains subdirectories, "
                         "where each subdirectory corresponds to results for class"
                         "specfic model evaluation (e.g. sheep-model)")
+                        
+    parser.add_argument('-am', '--accuracy-calc-method', default='overall')
                         
     parser.add_argument('-a', '--action', default='plot_bar_graphs',
                         help="what function would you like to use")
