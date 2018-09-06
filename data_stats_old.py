@@ -20,6 +20,11 @@ from collections import Counter
 # 10) same as (9) but separately for train/val
 # 11) same as (9) for val with/withoud ambiguous points
 
+# for valset - already have the points int the validation set from prediction jsons
+# can infer also trainset from this.
+
+
+
 # TODO
 ## 1. points distribution (object/part) for:
 #    1. val set
@@ -47,7 +52,6 @@ from collections import Counter
 
 
 _AMBIGUOUS_VAL = -1
-_INVALID_VAL = -2
 
 CLASS_NAMES = [
     'background',
@@ -125,9 +129,9 @@ def get_stats_numbers():
 
 # TODO: logic is not same as in the code for mask_type == 'mode'
 # make it same
-def get_point_label(answers, labeling_method, min_number_of_answers):
-    if len(answers) < min_number_of_answers:
-        return _INVALID_VAL
+def get_point_label(answers, labeling_method):
+    if len(answers) < 3:
+        return -2
 
     if labeling_method == 'consensus_or_ambiguous':
         answers = np.array(answers)
@@ -138,12 +142,6 @@ def get_point_label(answers, labeling_method, min_number_of_answers):
 
     elif labeling_method == 'voting':
         ctr = Counter(answers)
-        # if there is a tie return _INVALID_VAL (invalid)
-        if len(ctr) > 1:
-            if ctr.most_common()[0][1] == ctr.most_common()[1][1]:
-                return _INVALID_VAL
-        if ctr.most_common()[0][0]  == _AMBIGUOUS_VAL:
-            return _INVALID_VAL
         return ctr.most_common()[0][0]
 
     else:
@@ -163,12 +161,11 @@ def print_stats_dataset(data, params):
     labeling_method = params['labeling_method']
     which = params['which']
     results_dir = params['results_dir']
-    min_number_of_answers = params['min_number_of_answers']
     num_pts = 0
     num_ambiguous_pts = 0
     classes_count = {cls:0 for cls in range(len(CLASS_NAMES))}
     classes_count_41_way = {cls:0 for cls in range(len(CLASS_NAMES_41_WAY))}
-    invalid_pts_ct = 0
+    minus_two_ct = 0
     
     print('')
     print("~" * 35)
@@ -178,7 +175,6 @@ def print_stats_dataset(data, params):
         validation_pts = dict()     # imid -> [pts]
         for im, pts in validation_data.items():
             validation_pts[im] = []
-            
             for pt_coords, pt_answers in pts.items():
                 validation_pts[im].append(pt_coords)
 
@@ -191,13 +187,13 @@ def print_stats_dataset(data, params):
 
     print("1. number of images annotated: {}\n".format(num_images))
 
-    # num_pts_validation = 0
+    num_pts_validation = 0
     for im, pts in data.items():
         for pt_coords, pt_answers in pts.items():
             if which == 'validation':
                 if im in validation_pts:
                     if pt_coords in validation_pts[im]:
-                        label = get_point_label(pt_answers, labeling_method, min_number_of_answers)
+                        label = get_point_label(pt_answers, labeling_method)
                     else:
                         continue
                 else:
@@ -205,8 +201,8 @@ def print_stats_dataset(data, params):
                 # label = pt_answers[0]
                 # print(pt_coords, label, pt_answers)
             elif which == 'all':
-                label = get_point_label(pt_answers, labeling_method, min_number_of_answers)
-                # cur_num_pts = len(pts.keys())
+                label = get_point_label(pt_answers, labeling_method)
+                cur_num_pts = len(pts.keys())
             elif which == 'training':
                 # can first make dictionary of all points in the val set
                 # than go through all points and if the points is in the valset don't count it
@@ -215,27 +211,26 @@ def print_stats_dataset(data, params):
                 # so use a file of experiment evaluated with ambiguous points also
                 if im in validation_pts:
                     if pt_coords in validation_pts[im]:
-                        # num_pts_validation += 1
+                        num_pts_validation += 1
                         continue
-                label = get_point_label(pt_answers, labeling_method, min_number_of_answers)
+                    continue
+                label = get_point_label(pt_answers, labeling_method)
             else:
                 raise NotImplementedError("unrecognized 'which' dataset option {}".format(
                                           which))
             num_pts += 1
             if label == _AMBIGUOUS_VAL:
                 num_ambiguous_pts += 1
-            elif label == _INVALID_VAL:
-                invalid_pts_ct += 1
+            elif label == -2:
+                minus_two_ct += 1
             else:
                 cls = get_semantic_class(label)
                 classes_count[cls] += 1
                 classes_count_41_way[label] += 1
 
-    num_pts = num_pts - invalid_pts_ct
-    # print("invalid = {}, total = {}".format(invalid_pts_ct, num_pts + invalid_pts_ct))
-    # return
-    # if which == 'training':
-        # num_pts -= num_pts_validation
+    num_pts = num_pts - minus_two_ct
+    if which == 'training':
+        num_pts -= num_pts_validation
     num_unambiguous_pts = num_pts - num_ambiguous_pts
 
 
@@ -261,13 +256,12 @@ def print_stats_dataset(data, params):
     
     total_fraction = 0
     for cls, count in classes_count.items():
-        # print("{} = {}".format(CLASS_NAMES[cls], count))
+        print("{} = {}".format(CLASS_NAMES[cls], count))
         with open(os.path.join(results_dir, 'class_counts.csv'), 'a') as f:
             writer = csv.writer(f)
             writer.writerow([CLASS_NAMES[cls], '{}'.format(count)])
 
         fraction = float(count) / num_pts
-
         total_fraction += fraction
         print("    {} = {:.3f}".format(CLASS_NAMES[cls], fraction * 100))
         with open(os.path.join(results_dir, 'class_distribution.csv'), 'a') as f:
@@ -317,10 +311,6 @@ def print_stats_dataset(data, params):
         writer = csv.writer(f)
         writer.writerow(['', 'object', 'part'])
     
-    with open(os.path.join(results_dir, 'object_part_distribution.csv'), 'w') as f:
-        writer = csv.writer(f)
-        writer.writerow(['', 'object', 'part'])
-    
     # TODO: wrong calculation for the which == validation
     # 10. for each class -> what is the distribution of object/part?
     print("10. per class object/part distribution (%)")
@@ -332,7 +322,7 @@ def print_stats_dataset(data, params):
     for cls_idx, cls in enumerate(CLASS_NAMES):
         if classes_count[cls_idx] == 0:
             continue
-        with open(os.path.join(results_dir, 'class_counts_breakdown.csv'), 'a') as f:
+        with open(os.path.join(results_dir, 'class_counts_2.csv'), 'a') as f:
             writer = csv.writer(f)
             writer.writerow([CLASS_NAMES[cls_idx], classes_count_41_way[cls_idx], classes_count_41_way[cls_idx + 20]])
 
@@ -341,8 +331,6 @@ def print_stats_dataset(data, params):
         print("{}:".format(cls))
         print("\tobject = {:.2f}".format(object_fraction))
         print("\tpart = {:.2f}".format(part_fraction))
-        print("\tobject = {}, part = {}, count = {}".format(classes_count_41_way[cls_idx],
-                                                            classes_count_41_way[cls_idx + 20], classes_count[cls_idx]))
         print('')
         with open(os.path.join(results_dir, 'object_part_distribution.csv'), 'a') as f:
             writer = csv.writer(f)
@@ -362,7 +350,6 @@ def main(args):
     params['labeling_method'] = args.labeling_method
     mask_type = args.mask_type_for_validation
     params['which'] = args.which_data
-    params['min_number_of_answers'] = args.min_number_of_answers
     assert params['which'] in ['validation', 'training', 'all']
     params['results_dir'] = '../../docs/data_stats/{}'.format(params['which'])
     if not os.path.isdir(params['results_dir']):
@@ -409,10 +396,6 @@ if __name__ == '__main__':
     parser.add_argument('-w', '--which-data', default='all',
                         help="which dataset would you like to analyze")
     parser.add_argument('-m', '--mask-type-for-validation', default='consensus_or_ambiguous')
-    parser.add_argument('-a', '--min-number-of-answers', default=3, type=int,
-                        help="minimum number of answers(annotations) for a point to be used in training/validating")
-
-
     args = parser.parse_args()
     main(args)
 
